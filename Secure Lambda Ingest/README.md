@@ -7,6 +7,97 @@ The configuration follows best practices for **security**, **cost-efficiency**, 
 
 ---
 
+## 🏗️ System Architecture
+
+### Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph AWS [AWS Cloud - eu-west-1 Ireland]
+        direction TB
+        subgraph SecurityLayer [Security & Configuration Layer]
+            SM[AWS Secrets Manager<br/>🗝️ log-ingest/&lt;app-name&gt;<br/>• HEC Token<br/>• API Keys]
+            IAM[IAM Role<br/>🔐 lambda-splunk-onboarding-role<br/>• secretsmanager:GetSecretValue<br/>• logs:CreateLogGroup<br/>• logs:CreateLogStream<br/>• logs:PutLogEvents]
+        end
+
+        subgraph ComputeLayer [Compute Layer]
+            L[Lambda Function<br/>⚡ splunk-onboard-function<br/>Architecture: ARM64 Graviton2<br/>Runtime: Python 3.x<br/>Memory: 256-1024 MB<br/>Timeout: 1-5 min]
+            
+            subgraph Config [Function Configuration]
+                EV1[SPLUNK_HEC_URL]
+                EV2[SPLUNK_INDEX]
+                EV3[SECRET_NAME]
+                EV4[AWS_REGION=eu-west-1]
+            end
+        end
+
+        subgraph MonitoringLayer [Monitoring & Logging]
+            CW[CloudWatch Logs<br/>📊 Execution Metrics<br/>Error Tracking<br/>Performance Monitoring]
+        end
+
+        SM -- Secure Credential Retrieval --> L
+        IAM -- Least Privilege Access --> L
+        Config -- Environment Config --> L
+        L -- Execution Logs --> CW
+    end
+
+    subgraph ExternalSystems [External Systems]
+        API[Third-party Application API<br/>🌐 REST/HTTP API]
+        SPLUNK[Splunk Cloud Environment<br/>☁️ Enterprise Cloud]
+        
+        subgraph SplunkInternal [Splunk Components]
+            HEC[HTTP Event Collector<br/>🔒 HTTPS Endpoint<br/>/services/collector]
+            IDX[Search Index<br/>📁 your_index_name]
+            UI[Splunk Web Interface<br/>🔍 Search & Analysis]
+        end
+    end
+
+    API -- API Data Polling/Calls --> L
+    L -- Secure Log Ingestion<br/>HTTPS POST /services/collector --> HEC
+    HEC -- Data Processing --> IDX
+    IDX -- Data Querying --> UI
+
+    classDef awsComponent fill:#ff9900,stroke:#fff,stroke-width:2px,color:#000
+    classDef securityComponent fill:#ff6666,stroke:#fff,stroke-width:2px,color:#000
+    classDef splunkComponent fill:#82ff82,stroke:#fff,stroke-width:2px,color:#000
+    classDef externalComponent fill:#66aaff,stroke:#fff,stroke-width:2px,color:#000
+    
+    class SM,IAM securityComponent
+    class L,EV1,EV2,EV3,EV4,CW awsComponent
+    class HEC,IDX,UI,SPLUNK splunkComponent
+    class API externalComponent
+
+    %% Data Flow Annotations
+    linkStyle 4 stroke:#00ff00,stroke-width:2px,stroke-dasharray: 5 5
+    linkStyle 5 stroke:#ff6600,stroke-width:2px
+    linkStyle 6 stroke:#0088ff,stroke-width:2px
+    linkStyle 7 stroke:#0088ff,stroke-width:2px
+```
+
+### Data Flow Sequence
+
+```mermaid
+sequenceDiagram
+    participant A as Third-party App
+    participant L as Lambda Function
+    participant S as Secrets Manager
+    participant H as Splunk HEC
+    participant C as CloudWatch
+
+    Note over L: Trigger Event (API Call/Schedule)
+    L->>S: GetSecretValue(secret_name)
+    S-->>L: Return HEC Token & API Keys
+    L->>A: Fetch Logs (API Call)
+    A-->>L: Return Log Data
+    L->>H: HTTPS POST /services/collector
+    Note over L: HEC Token in Header<br/>Logs in JSON Body
+    H-->>L: 200 OK Response
+    L->>C: Write Execution Logs
+    Note over C: Success/Failure Metrics<br/>Performance Data
+```
+
+---
+
 ## 🧭 Step-by-Step Setup Guide
 
 ### Step 1: Region and Architecture
@@ -22,7 +113,7 @@ The configuration follows best practices for **security**, **cost-efficiency**, 
 
 1. Open **AWS Secrets Manager** → **Store a new secret**.
 2. Select **Other type of secret**.
-3. Under **Key/value pairs**, add your application’s credentials, e.g.:
+3. Under **Key/value pairs**, add your application's credentials, e.g.:
 
    ```json
    {
@@ -88,7 +179,7 @@ These environment variables will be referenced inside the Lambda code.
 
 ### Step 6: Upload the Lambda Code
 
-1. Copy the prepared Python Lambda code (from your project’s `/lambda/` folder).
+1. Copy the prepared Python Lambda code (from your project's `/lambda/` folder).
 2. Paste it into the inline code editor in AWS Lambda.
 3. Click **Deploy**.
 4. Your Lambda is now ready to execute.
@@ -118,7 +209,7 @@ These environment variables will be referenced inside the Lambda code.
    index=<your_index_name>
    ```
 2. Confirm logs are appearing from your Lambda function.
-3. If data doesn’t appear, check:
+3. If data doesn't appear, check:
    * HEC token validity.
    * Network permissions or firewall rules.
    * Lambda logs for timeout or API errors.
